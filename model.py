@@ -1,7 +1,36 @@
 import torch.nn as nn
 import torch
 
-from pipeline_utils import FeatureExtractor
+
+class FeatureExtractor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=(3, 3), padding=(1, 0))
+        self.conv2 = nn.Conv2d(16, 16, kernel_size=(3, 3), padding=(1, 0))
+        self.conv3 = nn.Conv2d(16, 16, kernel_size=(1, 8))
+
+        self.dropout = nn.Dropout(0.1)
+        self.elu = nn.ELU()
+        self.pool = nn.MaxPool2d(kernel_size=(1, 3))
+
+    def forward(self, x):
+
+        y = self.conv1(x)
+        y = self.elu(y)
+        y = self.dropout(y)
+        y = self.pool(y)
+
+        y = self.conv2(y)
+        y = self.elu(y)
+        y = self.dropout(y)
+        y = self.pool(y)
+
+        y = self.conv3(y)
+        y = self.elu(y)
+
+        y = y.view(-1, y.shape[1], y.shape[2])
+
+        return y
 
 
 class TCNBlock(nn.Module):
@@ -30,7 +59,7 @@ class TCNBlock(nn.Module):
         return y_next_layer, y_skip
 
 
-class DummyModel(nn.Module):
+class JointModel(nn.Module):
     def __init__(self, dilatation=None, dropout=0.1, num_layers=11):
         super().__init__()
 
@@ -40,7 +69,7 @@ class DummyModel(nn.Module):
         self.tempo_dense = nn.Linear(16, 300)
         self.tempo_softmax = nn.Softmax(dim=1)
 
-        self.beat_dense = nn.Linear(16*3000, 3000)
+        self.beat_dense = nn.Linear(16, 1)
         self.beat_sigmoid = nn.Sigmoid()
 
         self.dropout = nn.Dropout1d(dropout)
@@ -60,20 +89,16 @@ class DummyModel(nn.Module):
 
         y = self.feature_extractor(x)
 
-        # y = (y - y.mean()) / y.std()  # Normalisation
-
         for block in self.network:
             y_beat, y_tempo = block(y)
             skip_sum += y_tempo
 
         y_beat = self.dropout(y_beat)
 
-        # Flatten x for the linear layers
-        y_beat_flat = y_beat.view(y_beat.size(0), -1)
+        y_beat_transposed = y_beat.transpose(1, 2)
 
-        # y_beat = self.beat_dense(y_beat)
-        y_beat = self.beat_dense(y_beat_flat)
-        # y_beat = self.beat_sigmoid(y_beat)
+        y_beat = self.beat_dense(y_beat_transposed)
+        y_beat = y_beat.squeeze(-1)
 
         y_tempo = self.global_pooling(skip_sum)
         y_tempo = self.dropout(y_tempo)
@@ -89,15 +114,12 @@ class DummyModel(nn.Module):
 
 if __name__ == "__main__":
 
-    tensor = torch.rand(size=(64, 16, 3000))
+    tensor = torch.rand(size=(64, 1, 3000, 81))
     print(tensor.shape)
-    model = DummyModel()
-    output = model(tensor)
-    print(output.shape)
-    torch.set_printoptions(threshold=torch.inf)
-    print(output)
+    model = JointModel()
+    output_beat, output_tempo = model(tensor)
+    print(output_beat.shape, output_tempo.shape)
 
-    # print(model.eval())
     total_params = sum(p.numel() for p in model.parameters())
     print(total_params)
     for name, p in model.named_parameters():

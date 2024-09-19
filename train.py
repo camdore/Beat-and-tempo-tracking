@@ -7,7 +7,7 @@ import torch
 from argparse import ArgumentParser
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
-from model import DummyModel
+from model import JointModel
 from pipeline_utils import AudioDataset
 from madmom.features import DBNBeatTrackingProcessor
 from utils import BeatF1Score
@@ -44,10 +44,10 @@ class LitModel(L.LightningModule):  # ce module s'occupe de la définition de to
     def __init__(self):
         super().__init__()
         self.save_hyperparameters()
-        self.model = DummyModel()
+        self.model = JointModel()
         self.loss_fn = nn.BCEWithLogitsLoss()  # la loss est binaire car la sortie de beat est un sigmoid
         self.loss_fn2 = nn.CrossEntropyLoss()  # on choisi cette loss pour la sortie tempo qui est un softmax
-        self.f1_metric = BeatF1Score(window_size=70)  # f1 score pour le beat
+        self.f1_metric = BeatF1Score(window_size=70)  # custom f1 score pour le beat
         self.accuracy = Accuracy(task='multiclass', num_classes=300)  # accuracy pour le tempo
         self.automatic_optimization = True
         self.post_processor = DBNBeatTrackingProcessor(min_bpm=55, max_bpm=215, fps=100, online=True)
@@ -66,17 +66,27 @@ class LitModel(L.LightningModule):  # ce module s'occupe de la définition de to
         loss_beat = self.loss_fn(pred_beat, y_beat)
         self.log('train_lossBCE_beat', loss_beat, on_step=True, on_epoch=False)
 
-        # loss_tempo = self.loss_fn2(pred_tempo, y_tempo)
-        # self.log('train_lossCE_tempo', loss_tempo, on_step=True, on_epoch=False)
-        #
-        # final_loss = (loss_beat + loss_tempo) / 2
-        # self.log('train_final_loss', final_loss, on_step=True, on_epoch=False)
+        loss_tempo = self.loss_fn2(pred_tempo, y_tempo)
+        self.log('train_lossCE_tempo', loss_tempo, on_step=True, on_epoch=False)
+
+        final_loss = (loss_beat + loss_tempo) / 2
+        self.log('train_final_loss', final_loss, on_step=True, on_epoch=False)
 
         return loss_beat
 
-    def on_train_epoch_end(self):
-        # Reset the metric for the next epoch
-        self.f1_metric.reset()
+    def validation_step(self, validate_batch, batch_idx):
+        x, y_beat, y_tempo = validate_batch
+        x = x.squeeze(1)
+        pred_beat, pred_tempo = self.model(x)
+
+        loss_beat = self.loss_fn(pred_beat, y_beat)
+        self.log('val_lossBCE_beat', loss_beat, on_step=False, on_epoch=True)
+
+        loss_tempo = self.loss_fn2(pred_tempo, y_tempo)
+        self.log('val_lossCE_tempo', loss_tempo, on_step=False, on_epoch=True)
+
+        final_loss = (loss_beat + loss_tempo) / 2
+        self.log('val_final_loss', final_loss, on_step=False, on_epoch=True)
 
     def test_step(self, test_batch, batch_idx):
         x, y_beat, y_tempo = test_batch
@@ -84,7 +94,7 @@ class LitModel(L.LightningModule):  # ce module s'occupe de la définition de to
         pred_beat, pred_tempo = self.model(x)
 
         loss_beat = self.loss_fn(pred_beat, y_beat)
-        self.log('test_lossBCE_beat', loss_beat, on_step=True, on_epoch=True)
+        self.log('test_lossBCE_beat', loss_beat, on_step=False, on_epoch=True)
 
         pred_beat_og = torch.sigmoid(pred_beat)
 
@@ -106,46 +116,29 @@ class LitModel(L.LightningModule):  # ce module s'occupe de la définition de to
         # Update the custom F1 metric
         self.f1_metric.update(pred_beat_tensor, y_beat)
         f1_score = self.f1_metric.compute()
-        self.log('test_f1score_beat', f1_score, on_step=True, on_epoch=False)
+        self.log('test_f1score_beat', f1_score, on_step=True, on_epoch=True)
 
-        # self.accuracy(pred_tempo, y_tempo)
-        # self.log('test_accuracy_tempo', self.accuracy, on_step=True, on_epoch=False)
-        #
-        # loss_tempo = self.loss_fn2(pred_tempo, y_tempo)
-        # self.log('test_lossCE_tempo', loss_tempo, on_step=True, on_epoch=False)
-        #
-        # final_loss = (loss_beat + loss_tempo) / 2
-        # self.log('test_final_loss', final_loss, on_step=True, on_epoch=False)
+        self.accuracy(pred_tempo, y_tempo)
+        self.log('test_accuracy_tempo', self.accuracy, on_step=True, on_epoch=True)
+
+        loss_tempo = self.loss_fn2(pred_tempo, y_tempo)
+        self.log('test_lossCE_tempo', loss_tempo, on_step=False, on_epoch=True)
+
+        final_loss = (loss_beat + loss_tempo) / 2
+        self.log('test_final_loss', final_loss, on_step=False, on_epoch=True)
 
     def on_test_epoch_end(self):
         # Reset the metric for the next epoch
         self.f1_metric.reset()
-
-    def validation_step(self, validate_batch, batch_idx):
-        x, y_beat, y_tempo = validate_batch
-        x = x.squeeze(1)
-        pred_beat, pred_tempo = self.model(x)
-
-        loss_beat = self.loss_fn(pred_beat, y_beat)
-        self.log('val_lossBCE_beat', loss_beat, on_step=False, on_epoch=True)
-
-        # loss_tempo = self.loss_fn2(pred_tempo, y_tempo)
-        # self.log('val_lossCE_tempo', loss_tempo, on_step=True, on_epoch=False)
-        #
-        # final_loss = (loss_beat + loss_tempo) / 2
-        # self.log('val_final_loss', final_loss, on_step=True, on_epoch=True)
-
-    def on_validation_epoch_end(self):
-        # Reset the metric for the next epoch
-        self.f1_metric.reset()
+        self.accuracy.reset()
 
 
 def run_baseline(batch_size_train, batch_size_val, path_track, path_beat, path_tempo):
-    logger = TensorBoardLogger(save_dir='.', default_hp_metric=True, log_graph=True, version='mel_spec+feature_extract')
+    logger = TensorBoardLogger(save_dir='.', default_hp_metric=True, log_graph=True, version='updated_model')
 
     L.seed_everything(42, workers=True)
 
-    # checkpoint_path = 'C:/Users/camil/Desktop/MWM/test MWM/lightning_logs/feature_extract_in_training/checkpoints/epoch=49-step=500.ckpt'
+    # checkpoint_path = 'C:/Users/camil/Desktop/MWM/test MWM/lightning_logs/updated_model/checkpoints/epoch=149-step=1500.ckpt'
 
     # model = LitModel.load_from_checkpoint(checkpoint_path=checkpoint_path)
     model = LitModel()
@@ -157,9 +150,9 @@ def run_baseline(batch_size_train, batch_size_val, path_track, path_beat, path_t
 
     trainer = L.Trainer(
         accelerator='cuda',
-        max_epochs=50,
+        max_epochs=150,
         log_every_n_steps=10,
-        logger=logger,
+        logger=False,
         precision='16-mixed',
         gradient_clip_val=0.5,
         gradient_clip_algorithm='norm',
