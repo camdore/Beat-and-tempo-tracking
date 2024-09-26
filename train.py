@@ -15,14 +15,13 @@ from misc import check_all_distrib, check_input_distribution
 
 
 class DataModule(L.LightningDataModule):  # ce module s'occupe de toute la mise en forme de données et retourne les différents dataloaders
-    def __init__(self, path_track, path_beat, path_tempo, batch_size_train , batch_size_val):
+    def __init__(self, path_track, path_beat, path_tempo, batch_size):
         super().__init__()
         self.save_hyperparameters()
         self.path_track = path_track
         self.path_beat = path_beat
         self.path_tempo = path_tempo
-        self.batch_size_train = batch_size_train
-        self.batch_size_val = batch_size_val
+        self.batch_size = batch_size
 
         self.data = AudioDataset(data_dir=self.path_track, beat_annotations=self.path_beat, tempo_annotation=self.path_tempo)
 
@@ -31,13 +30,13 @@ class DataModule(L.LightningDataModule):  # ce module s'occupe de toute la mise 
         self.train, self.val = random_split(self.train, lengths=[0.8, 0.2])
 
     def train_dataloader(self):
-        return DataLoader(self.train, batch_size=self.batch_size_train, num_workers=4, shuffle=True, persistent_workers=True)
-
-    def test_dataloader(self):
-        return DataLoader(self.test, batch_size=self.batch_size_val, num_workers=4, shuffle=False, persistent_workers=True)
+        return DataLoader(self.train, batch_size=self.batch_size, num_workers=4, shuffle=True, persistent_workers=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val, batch_size=self.batch_size_val, num_workers=4, shuffle=False, persistent_workers=True)
+        return DataLoader(self.val, batch_size=self.batch_size, num_workers=4, shuffle=False, persistent_workers=True)
+
+    def test_dataloader(self):
+        return DataLoader(self.test, batch_size=1, num_workers=4, shuffle=False, persistent_workers=True)
 
 
 class LitModel(L.LightningModule):  # ce module s'occupe de la définition de toutes les étapes de l'entrainement de manière centralisée
@@ -133,7 +132,7 @@ class LitModel(L.LightningModule):  # ce module s'occupe de la définition de to
         self.accuracy.reset()
 
 
-def run_baseline(batch_size_train, batch_size_val, path_track, path_beat, path_tempo):
+def run_baseline(batch_size, path_track, path_beat, path_tempo):
     logger = TensorBoardLogger(save_dir='.', default_hp_metric=True, log_graph=True, version='updated_model')
 
     L.seed_everything(42, workers=True)
@@ -144,7 +143,7 @@ def run_baseline(batch_size_train, batch_size_val, path_track, path_beat, path_t
     model = LitModel()
     # print(model.eval())
 
-    data = DataModule(path_track, path_beat, path_tempo, batch_size_train, batch_size_val)
+    data = DataModule(path_track, path_beat, path_tempo, batch_size)
 
     # check_all_distrib(data)
 
@@ -173,17 +172,15 @@ if __name__ == "__main__":
     path_track = 'C:/Users/camil/Desktop/Thales/GTZAN/tracks'
     path_tempo = 'C:/Users/camil/Desktop/Thales/GTZAN/tempo'
     path_beat = 'C:/Users/camil/Desktop/Thales/GTZAN/beats'
-    batch_size_train = 64
-    batch_size_val = 1
+    batch_size = 64
 
     parser = ArgumentParser()
 
-    parser.add_argument('--batch-size-train', default=batch_size_train, type=int)
-    parser.add_argument('--batch-size-val', default=batch_size_val, type=int)
+    parser.add_argument('--batch-size', default=batch_size, type=int)
     parser.add_argument('--path-track', default=path_track, type=str)
     parser.add_argument('--path-beat', default=path_beat, type=str)
     parser.add_argument('--path-tempo', default=path_tempo, type=str)
 
     args = parser.parse_args()
 
-    run_baseline(args.batch_size_train, args.batch_size_val, args.path_track, args.path_beat, args.path_tempo)
+    run_baseline(args.batch_size, args.path_track, args.path_beat, args.path_tempo)
