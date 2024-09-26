@@ -60,19 +60,18 @@ class TCNBlock(nn.Module):
 
 
 class JointModel(nn.Module):
-    def __init__(self, dilatation=None, dropout=0.1, num_layers=11):
+    def __init__(self, dilatation=None, num_layers=11):
         super().__init__()
 
         self.feature_extractor = FeatureExtractor()
 
         self.global_pooling = nn.AdaptiveAvgPool1d(1)
         self.tempo_dense = nn.Linear(16, 300)
-        self.tempo_softmax = nn.Softmax(dim=1)
 
         self.beat_dense = nn.Linear(16, 1)
-        self.beat_sigmoid = nn.Sigmoid()
-
-        self.dropout = nn.Dropout1d(dropout)
+        self.tempo_log_softmax = nn.LogSoftmax(dim=1)
+        self.tempo_softmax = nn.Softmax(dim=1)
+        self.dropout_beat = nn.Dropout1d(0.1)
         self.dropout_tempo = nn.Dropout1d(0.5)
         # weight initialisation by default is sampled from uniform distribution for the Conv1d
 
@@ -90,10 +89,10 @@ class JointModel(nn.Module):
         y = self.feature_extractor(x)
 
         for block in self.network:
-            y_beat, y_tempo = block(y)
-            skip_sum += y_tempo
+            y_beat, y_skip = block(y)
+            skip_sum += y_skip
 
-        y_beat = self.dropout(y_beat)
+        y_beat = self.dropout_beat(y_beat)
 
         y_beat_transposed = y_beat.transpose(1, 2)
 
@@ -101,13 +100,14 @@ class JointModel(nn.Module):
         y_beat = y_beat.squeeze(-1)
 
         y_tempo = self.global_pooling(skip_sum)
-        y_tempo = self.dropout(y_tempo)
+        y_tempo = self.dropout_tempo(y_tempo)
 
         # Flatten x for the linear layers
         y_tempo_flat = y_tempo.view(y_tempo.size(0), -1)
 
         y_tempo = self.tempo_dense(y_tempo_flat)
-        y_tempo = self.tempo_softmax(y_tempo)
+        # y_tempo = self.tempo_softmax(y_tempo)
+        # y_tempo = self.tempo_log_softmax(y_tempo)
 
         return y_beat, y_tempo
 
