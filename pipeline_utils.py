@@ -1,40 +1,8 @@
-import torch.nn as nn
 import torch
 import pandas as pd
 import os
 import torchaudio
 from torch.utils.data import Dataset
-
-
-class FeatureExtractor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=(3, 3), padding=(1, 0))
-        self.conv2 = nn.Conv2d(16, 16, kernel_size=(3, 3), padding=(1, 0))
-        self.conv3 = nn.Conv2d(16, 16, kernel_size=(1, 8))
-
-        self.dropout = nn.Dropout(0.1)
-        self.elu = nn.ELU()
-        self.pool = nn.MaxPool2d(kernel_size=(1, 3))
-
-    def forward(self, x):
-
-        y = self.conv1(x)
-        y = self.elu(y)
-        y = self.dropout(y)
-        y = self.pool(y)
-
-        y = self.conv2(y)
-        y = self.elu(y)
-        y = self.dropout(y)
-        y = self.pool(y)
-
-        y = self.conv3(y)
-        y = self.elu(y)
-
-        y = y.view(-1, y.shape[1], y.shape[2])
-
-        return y
 
 
 class AudioDataset(Dataset):
@@ -46,7 +14,6 @@ class AudioDataset(Dataset):
         self.audio_files = [f for f in os.listdir(data_dir) if f.endswith('.wav')]
         self.beat = [csv for csv in os.listdir(beat_annotations) if csv.endswith('.beats')]
         self.tempo = [csv for csv in os.listdir(tempo_annotation) if csv.endswith('.bpm')]
-        self.model = FeatureExtractor()
 
     def __len__(self):
         return len(self.audio_files)
@@ -75,9 +42,6 @@ class AudioDataset(Dataset):
         #
         # n_frames = spec_log.shape[-2]
 
-        # input_feature = self.model(spec_log)
-        # input_feature = input_feature.detach()
-
         mel_spec = torchaudio.transforms.MelSpectrogram(sample_rate=sample_rate, n_fft=2048, hop_length=220, f_min=30,
                                                         f_max=(sample_rate // 2), n_mels=81, normalized=True)(waveform)
 
@@ -86,11 +50,6 @@ class AudioDataset(Dataset):
         mel_spec = mel_spec.transpose(2, 3)
 
         n_frames = mel_spec.shape[-2]
-
-        # input_feature = self.model(mel_spec)
-        # input_feature = input_feature.detach()
-        #
-        # input_feature_normalized = (input_feature - input_feature.mean()) / input_feature.std()  # z-score normalisation : mean = 0, std =1
 
         file_name_beat = os.path.join(self.beat_annotations, self.beat[idx])
         csv_beat = pd.read_csv(file_name_beat, sep='\t', header=None)
@@ -107,12 +66,28 @@ class AudioDataset(Dataset):
 
         target_tempo[tempo_value] = 1
 
+        # try:
+        #     target_tempo[tempo_value - 1] = 0.5
+        # except IndexError:
+        #     pass
+        # try:
+        #     target_tempo[tempo_value + 1] = 0.5
+        # except IndexError:
+        #     pass
+        # try:
+        #     target_tempo[tempo_value - 2] = 0.25
+        # except IndexError:
+        #     pass
+        # try:
+        #     target_tempo[tempo_value + 2] = 0.25
+        # except IndexError:
+        #     pass
+
         for i in beat_frames:  # on remplace dans le vecteur les frames correspondantes par la valeur 1 qui correspond à la présence d'un beat
             if i >= n_frames:  # if beat annotations "overflow" the length size of resized spectrogram
                 pass
             else:
                 target_beat[i] = 1
 
-        # return input_feature_normalized, target_beat, target_tempo
         # return spec_log, target_beat, target_tempo
         return mel_spec, target_beat, target_tempo
