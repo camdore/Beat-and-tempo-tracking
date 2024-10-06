@@ -26,6 +26,9 @@ class BeatF1Score(torchmetrics.Metric):
             pred_beats = torch.nonzero(preds[i]).squeeze()  # Indices of predicted beats (frame numbers)
             true_beats = torch.nonzero(target[i]).squeeze()  # Indices of true beats (frame numbers)
 
+            if pred_beats.dim() == 0:
+                pred_beats = pred_beats.unsqueeze(0)
+
             if len(true_beats) == 0:
                 # No true beats in this sample
                 self.false_positives += len(pred_beats)
@@ -47,8 +50,8 @@ class BeatF1Score(torchmetrics.Metric):
                 if min_diff <= self.window_size and not used_true_beats[min_idx]:
                     tp += 1
                     used_true_beats[min_idx] = 1  # Mark this true beat as matched
-                elif 0 < min_diff <= 2 and not used_true_beats[min_idx]:
-                    tp += 0.5  # Adjacent match within ±2 frames gets weight of 0.5
+                elif 0 < min_diff <= 1 and not used_true_beats[min_idx]:
+                    tp += 0.5  # Adjacent match within ±1 frames gets weight of 0.5
                     used_true_beats[min_idx] = 1  # Mark this true beat as matched
                 else:
                     self.false_positives += 1

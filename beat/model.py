@@ -52,27 +52,21 @@ class TCNBlock(nn.Module):
         y = self.dil_conv(x)
         y = self.elu(y)
         y = self.spatial_dropout(y)
-        y_skip = self.conv_1d(y)
 
-        y_next_layer = y_skip + res
+        y_next_layer = y
 
-        return y_next_layer, y_skip
+        return y_next_layer
 
 
-class JointModel(nn.Module):
+class TCNModel(nn.Module):
     def __init__(self, dilatation=None, num_layers=11):
         super().__init__()
 
         self.feature_extractor = FeatureExtractor()
 
-        self.global_pooling = nn.AdaptiveAvgPool1d(1)
-        self.tempo_dense = nn.Linear(16, 300)
+        self.dense = nn.Linear(16, 1)
+        self.dropout = nn.Dropout1d(0.1)
 
-        self.beat_dense = nn.Linear(16, 1)
-        self.tempo_log_softmax = nn.LogSoftmax(dim=1)
-        self.tempo_softmax = nn.Softmax(dim=1)
-        self.dropout_beat = nn.Dropout1d(0.1)
-        self.dropout_tempo = nn.Dropout1d(0.5)
         # weight initialisation by default is sampled from uniform distribution for the Conv1d
 
         self.network = nn.ModuleList()
@@ -84,43 +78,32 @@ class JointModel(nn.Module):
             self.network = self.network.append(TCNBlock(dilatation=dilations[i]))  # on crée le réseau avec les 11 layers
 
     def forward(self, x):
-        skip_sum = 0
 
         y = self.feature_extractor(x)
 
         for block in self.network:
-            y_beat, y_skip = block(y)
-            skip_sum += y_skip
+            y_beat = block(y)
 
-        y_beat = self.dropout_beat(y_beat)
+        y_beat = self.dropout(y_beat)
 
         y_beat_transposed = y_beat.transpose(1, 2)
 
-        y_beat = self.beat_dense(y_beat_transposed)
+        y_beat = self.dense(y_beat_transposed)
         y_beat = y_beat.squeeze(-1)
 
-        y_tempo = self.global_pooling(skip_sum)
-        y_tempo = self.dropout_tempo(y_tempo)
-
-        # Flatten x for the linear layers
-        y_tempo_flat = y_tempo.view(y_tempo.size(0), -1)
-
-        y_tempo = self.tempo_dense(y_tempo_flat)
-        # y_tempo = self.tempo_softmax(y_tempo)
-        # y_tempo = self.tempo_log_softmax(y_tempo)
-
-        return y_beat, y_tempo
+        return y_beat
 
 
 if __name__ == "__main__":
 
     tensor = torch.rand(size=(64, 1, 3000, 81))
-    print(tensor.shape)
-    model = JointModel()
-    output_beat, output_tempo = model(tensor)
-    print(output_beat.shape, output_tempo.shape)
+    print('Input shape :', tensor.shape)
+    model = TCNModel()
+    output_beat = model(tensor)
+    print('Output shape :', output_beat.shape)
 
     total_params = sum(p.numel() for p in model.parameters())
-    print(total_params)
+    print('Number of parameters :', total_params)
+    print('List of layers and their number of parameters:')
     for name, p in model.named_parameters():
         print(name, p.numel())
